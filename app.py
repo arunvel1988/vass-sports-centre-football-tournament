@@ -131,6 +131,18 @@ def match_to_dict(match_id):
 
 
 # ---------------------------------------------------------------------------
+# HOME — landing page linking to everything
+# ---------------------------------------------------------------------------
+
+@app.route("/")
+def home():
+    db = get_db()
+    matches = db.execute("SELECT * FROM matches ORDER BY id DESC").fetchall()
+    groups = sorted({m["group_name"] for m in matches})
+    return render_template("home.html", matches=matches, groups=groups)
+
+
+# ---------------------------------------------------------------------------
 # ADMIN — the volunteer's screen
 # ---------------------------------------------------------------------------
 
