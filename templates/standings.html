@@ -1,0 +1,102 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Standings & Bracket</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#0b1220; color:#eee; margin:0; padding:20px; max-width:700px; margin-left:auto; margin-right:auto; }
+    h1 { font-size:1.4rem; margin-bottom:2px; }
+    .sub { color:#9aa4c0; margin-bottom:20px; }
+    h2 { font-size:1.05rem; color:#9aa4c0; margin:26px 0 10px; }
+    a { color:#7fd1ff; }
+    .card { background:#141d33; padding:14px 16px; border-radius:10px; margin-bottom:14px; }
+    table { width:100%; border-collapse: collapse; }
+    th, td { padding:7px 8px; text-align:left; font-size:0.9rem; }
+    th { color:#9aa4c0; font-weight:600; border-bottom:1px solid #202844; }
+    tr:nth-child(even) { background:#0f1729; }
+    .qualified { color:#4ade80; }
+    .match-row { display:flex; justify-content:space-between; padding:7px 0; border-bottom:1px solid #202844; font-size:0.95rem; }
+    .match-row:last-child { border-bottom:none; }
+    .winner-tag { color:#4ade80; font-weight:600; margin-left:8px; }
+    .status-tag { color:#9aa4c0; font-size:0.8rem; }
+    .empty { color:#9aa4c0; }
+  </style>
+</head>
+<body>
+  <h1 id="title">⚽ Standings</h1>
+  <div class="sub" id="subtitle">Loading…</div>
+
+  <div id="groupsContainer"></div>
+  <div id="bracketContainer"></div>
+
+  <script>
+    async function refresh() {
+      const res = await fetch('/api/tournament');
+      const data = await res.json();
+
+      document.getElementById('title').textContent = `⚽ ${data.tournament_name}`;
+      document.getElementById('subtitle').textContent =
+        `Format: ${data.format.replace('_',' + ')}` +
+        (data.total_teams ? ` · ${data.total_teams} teams` : '') +
+        (data.total_groups ? ` · ${data.total_groups} groups` : '');
+
+      const groupsEl = document.getElementById('groupsContainer');
+      groupsEl.innerHTML = '';
+      if (data.groups.length) {
+        const h = document.createElement('h2');
+        h.textContent = 'Group Standings';
+        groupsEl.appendChild(h);
+
+        data.groups.forEach(g => {
+          const rows = data.standings[g];
+          const card = document.createElement('div');
+          card.className = 'card';
+          const qualifiers = data.qualifiers_per_group || 2;
+          card.innerHTML = `
+            <strong>Group ${g}</strong>
+            <table>
+              <tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>Pts</th></tr>
+              ${rows.map((r, i) => `
+                <tr class="${i < qualifiers ? 'qualified' : ''}">
+                  <td>${i+1}</td><td>${r.team}</td><td>${r.played}</td>
+                  <td>${r.won}</td><td>${r.drawn}</td><td>${r.lost}</td>
+                  <td>${r.gf}</td><td>${r.ga}</td><td><strong>${r.points}</strong></td>
+                </tr>`).join('')}
+            </table>`;
+          groupsEl.appendChild(card);
+        });
+      }
+
+      const bracketEl = document.getElementById('bracketContainer');
+      bracketEl.innerHTML = '';
+      if (data.bracket.length) {
+        const h = document.createElement('h2');
+        h.textContent = 'Knockout Bracket';
+        bracketEl.appendChild(h);
+
+        data.bracket.forEach(round => {
+          const card = document.createElement('div');
+          card.className = 'card';
+          card.innerHTML = `<strong>${round.label}</strong>` +
+            round.matches.map(m => `
+              <div class="match-row">
+                <span>${m.team_a} ${m.score_a} - ${m.score_b} ${m.team_b}</span>
+                <span>
+                  ${m.winner ? `<span class="winner-tag">✅ ${m.winner}</span>` : `<span class="status-tag">${m.status}</span>`}
+                </span>
+              </div>`).join('');
+          bracketEl.appendChild(card);
+        });
+      }
+
+      if (!data.groups.length && !data.bracket.length) {
+        groupsEl.innerHTML = '<p class="empty">No matches yet.</p>';
+      }
+    }
+
+    refresh();
+    setInterval(refresh, 10000);
+  </script>
+</body>
+</html>
