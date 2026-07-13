@@ -27,6 +27,23 @@ DATABASE = "vsfc.db"
 
 app = Flask(__name__)
 
+# Knockout stages in play order. compute_next_stage() uses this to name a
+# new round based on how many teams are going into it.
+STAGE_ORDER = ["group", "round_of_16", "quarterfinal", "semifinal", "third_place", "final"]
+STAGE_LABELS = {
+    "group": "Group Stage",
+    "round_of_16": "Round of 16",
+    "quarterfinal": "Quarter-Final",
+    "semifinal": "Semi-Final",
+    "third_place": "3rd Place Play-off",
+    "final": "Final",
+}
+
+
+def stage_for_team_count(n):
+    """How many teams go INTO a round decides what that round is called."""
+    return {2: "final", 4: "semifinal", 8: "quarterfinal", 16: "round_of_16"}.get(n)
+
 
 # ---------------------------------------------------------------------------
 # Database helpers
@@ -94,6 +111,85 @@ def compute_current_minute(match):
     return 0
 
 
+def get_winner(match):
+    """
+    Winner of a completed match. For knockout matches that end level, this
+    returns None until the volunteer manually declares a winner (penalties) —
+    see /admin/<id>/set-winner.
+    """
+    if match["status"] != "full_time":
+        return None
+    if match["winner_team"]:
+        return match["winner_team"]
+    if match["full_time_score_a"] > match["full_time_score_b"]:
+        return match["team_a"]
+    if match["full_time_score_b"] > match["full_time_score_a"]:
+        return match["team_b"]
+    return None  # drawn, unresolved
+
+
+def compute_standings(group_name):
+    """
+    Simple 3-1-0 standings table from completed GROUP-STAGE matches only
+    (knockout matches never affect the table).
+    """
+    db = get_db()
+    matches = db.execute(
+        "SELECT * FROM matches WHERE group_name=? AND stage='group' AND status='full_time'",
+        (group_name,),
+    ).fetchall()
+
+    table = {}
+
+    def team_row(name):
+        return table.setdefault(name, {
+            "team": name, "played": 0, "won": 0, "drawn": 0, "lost": 0,
+            "gf": 0, "ga": 0, "points": 0,
+        })
+
+    for m in matches:
+        a, b = team_row(m["team_a"]), team_row(m["team_b"])
+        a["played"] += 1
+        b["played"] += 1
+        a["gf"] += m["score_a"]
+        a["ga"] += m["score_b"]
+        b["gf"] += m["score_b"]
+        b["ga"] += m["score_a"]
+
+        if m["score_a"] > m["score_b"]:
+            a["won"] += 1
+            a["points"] += 3
+            b["lost"] += 1
+        elif m["score_a"] < m["score_b"]:
+            b["won"] += 1
+            b["points"] += 3
+            a["lost"] += 1
+        else:
+            a["drawn"] += 1
+            b["drawn"] += 1
+            a["points"] += 1
+            b["points"] += 1
+
+    return sorted(
+        table.values(),
+        key=lambda r: (r["points"], r["gf"] - r["ga"], r["gf"]),
+        reverse=True,
+    )
+
+
+def get_config():
+    db = get_db()
+    row = db.execute("SELECT * FROM tournament_config WHERE id=1").fetchone()
+    if row is None:
+        db.execute(
+            "INSERT INTO tournament_config (id, tournament_name, format, qualifiers_per_group) "
+            "VALUES (1, 'VSFC Tournament', 'group_knockout', 2)"
+        )
+        db.commit()
+        row = db.execute("SELECT * FROM tournament_config WHERE id=1").fetchone()
+    return row
+
+
 def recompute_score(match_id):
     """Score is derived from goal events, so it can never drift."""
     db = get_db()
@@ -129,10 +225,13 @@ def match_to_dict(match_id):
     return {
         "id": match["id"],
         "group": match["group_name"],
+        "stage": match["stage"],
+        "stage_label": STAGE_LABELS.get(match["stage"], match["stage"]),
         "team_a": match["team_a"],
         "team_b": match["team_b"],
         "score_a": match["score_a"],
         "score_b": match["score_b"],
+        "winner": get_winner(match),
         "status": match["status"],          # scheduled / live / half_time / full_time
         "half": match["half"],
         "duration_minutes": match["duration_minutes"],
@@ -197,14 +296,16 @@ def admin_new_match():
     duration = int(request.form.get("duration_minutes") or 90)
     # half length defaults to exactly half the duration (16 -> 8, 90 -> 45)
     half_length = int(request.form.get("half_length_minutes") or (duration // 2))
+    stage = request.form.get("stage") or "group"
+    group_name = request.form.get("group_name") or ""
 
     db.execute(
         "INSERT INTO matches "
         "(group_name, team_a, team_b, status, half, score_a, score_b, "
-        " duration_minutes, half_length_minutes) "
-        "VALUES (?, ?, ?, 'scheduled', 0, 0, 0, ?, ?)",
-        (request.form["group_name"], request.form["team_a"], request.form["team_b"],
-         duration, half_length),
+        " duration_minutes, half_length_minutes, stage) "
+        "VALUES (?, ?, ?, 'scheduled', 0, 0, 0, ?, ?, ?)",
+        (group_name, request.form["team_a"], request.form["team_b"],
+         duration, half_length, stage),
     )
     db.commit()
     return redirect(url_for("admin_list"))
@@ -285,11 +386,192 @@ def admin_add_event(match_id):
             (match_id,),
         )
         db.commit()
+        # Auto-resolve the winner if it wasn't a draw (knockout matches only
+        # need this; group matches just ignore the 'winner' field).
+        match = get_match_or_404(match_id)
+        winner = get_winner(match)
+        if winner:
+            db.execute("UPDATE matches SET winner_team=? WHERE id=?", (winner, match_id))
+            db.commit()
 
     else:
         return jsonify({"error": "unknown event type"}), 400
 
     return jsonify(match_to_dict(match_id))
+
+
+@app.route("/admin/<int:match_id>/set-winner", methods=["POST"])
+def admin_set_winner(match_id):
+    """
+    For knockout matches that finish level — the volunteer picks the winner
+    (e.g. after a penalty shootout) so the bracket can advance.
+    """
+    match = get_match_or_404(match_id)
+    if match is None:
+        return jsonify({"error": "match not found"}), 404
+    data = request.get_json(force=True)
+    team = data.get("team")
+    if team not in (match["team_a"], match["team_b"]):
+        return jsonify({"error": "team must be team_a or team_b of this match"}), 400
+    db = get_db()
+    db.execute("UPDATE matches SET winner_team=? WHERE id=?", (team, match_id))
+    db.commit()
+    return jsonify(match_to_dict(match_id))
+
+
+# ---------------------------------------------------------------------------
+# TOURNAMENT SETUP — format, groups, qualifiers
+# ---------------------------------------------------------------------------
+
+@app.route("/admin/setup", methods=["GET", "POST"])
+def admin_setup():
+    db = get_db()
+    if request.method == "POST":
+        db.execute(
+            "UPDATE tournament_config SET tournament_name=?, format=?, "
+            "total_teams=?, total_groups=?, qualifiers_per_group=? WHERE id=1",
+            (
+                request.form.get("tournament_name") or "VSFC Tournament",
+                request.form.get("format") or "group_knockout",
+                request.form.get("total_teams") or None,
+                request.form.get("total_groups") or None,
+                int(request.form.get("qualifiers_per_group") or 2),
+            ),
+        )
+        db.commit()
+        return redirect(url_for("admin_knockouts"))
+
+    config = get_config()
+    return render_template("admin_setup.html", config=config)
+
+
+# ---------------------------------------------------------------------------
+# KNOCKOUTS — seed a round from group standings, then advance winners
+# ---------------------------------------------------------------------------
+
+@app.route("/admin/knockouts")
+def admin_knockouts():
+    db = get_db()
+    config = get_config()
+
+    groups = sorted({
+        r["group_name"] for r in
+        db.execute("SELECT DISTINCT group_name FROM matches WHERE stage='group' AND group_name != ''")
+    })
+    standings_by_group = {g: compute_standings(g) for g in groups}
+
+    # Existing knockout matches, grouped by stage, in play order.
+    knockout_matches = db.execute(
+        "SELECT * FROM matches WHERE stage != 'group' ORDER BY id ASC"
+    ).fetchall()
+    stages_present = [s for s in STAGE_ORDER if s != "group"
+                       and any(m["stage"] == s for m in knockout_matches)]
+    rounds = []
+    for stage in stages_present:
+        stage_matches = [m for m in knockout_matches if m["stage"] == stage]
+        rounds.append({
+            "stage": stage,
+            "label": STAGE_LABELS[stage],
+            "matches": stage_matches,
+            "all_complete": all(m["status"] == "full_time" for m in stage_matches),
+            "all_resolved": all(get_winner(m) for m in stage_matches),
+        })
+
+    return render_template(
+        "admin_knockouts.html",
+        config=config, groups=groups, standings_by_group=standings_by_group,
+        rounds=rounds,
+    )
+
+
+@app.route("/admin/knockouts/generate-from-groups", methods=["POST"])
+def generate_from_groups():
+    db = get_db()
+    qualifiers = int(request.form.get("qualifiers_per_group") or 2)
+    selected_groups = request.form.getlist("groups")
+    duration = int(request.form.get("duration_minutes") or 90)
+    half_length = int(request.form.get("half_length_minutes") or (duration // 2))
+
+    if not selected_groups:
+        return "Pick at least one group.", 400
+
+    # Seeds ordered rank-major (all 1st-place teams, then all 2nd-place, ...)
+    # so the bracket pairing below naturally avoids same-group first-round
+    # clashes in the common cases (2 or 4 groups).
+    seeds = []
+    for rank in range(qualifiers):
+        for grp in selected_groups:
+            table = compute_standings(grp)
+            if rank < len(table):
+                seeds.append(table[rank]["team"])
+
+    n = len(seeds)
+    stage = stage_for_team_count(n)
+    if stage is None:
+        return (f"{n} qualifying teams doesn't make a clean bracket "
+                f"(need 2, 4, 8, or 16). Adjust groups or qualifiers per group."), 400
+
+    # Classic bracket pairing: seed 1 vs seed N, seed 2 vs seed N-1, etc.
+    for i in range(n // 2):
+        team_a, team_b = seeds[i], seeds[n - 1 - i]
+        db.execute(
+            "INSERT INTO matches "
+            "(group_name, team_a, team_b, status, half, score_a, score_b, "
+            " duration_minutes, half_length_minutes, stage) "
+            "VALUES ('', ?, ?, 'scheduled', 0, 0, 0, ?, ?, ?)",
+            (team_a, team_b, duration, half_length, stage),
+        )
+    db.commit()
+    return redirect(url_for("admin_knockouts"))
+
+
+@app.route("/admin/knockouts/generate-next", methods=["POST"])
+def generate_next_round():
+    db = get_db()
+    current_stage = request.form.get("stage")
+    duration = int(request.form.get("duration_minutes") or 90)
+    half_length = int(request.form.get("half_length_minutes") or (duration // 2))
+
+    matches = db.execute(
+        "SELECT * FROM matches WHERE stage=? ORDER BY id ASC", (current_stage,)
+    ).fetchall()
+
+    winners = []
+    losers = []
+    for m in matches:
+        w = get_winner(m)
+        if not w:
+            return (f"Match {m['team_a']} vs {m['team_b']} isn't resolved yet "
+                    f"(finish it, or declare a penalty winner)."), 400
+        winners.append(w)
+        losers.append(m["team_b"] if w == m["team_a"] else m["team_a"])
+
+    n = len(winners)
+    next_stage = stage_for_team_count(n)
+    if next_stage is None:
+        return f"{n} winners doesn't make a clean next round.", 400
+
+    for i in range(0, n, 2):
+        db.execute(
+            "INSERT INTO matches "
+            "(group_name, team_a, team_b, status, half, score_a, score_b, "
+            " duration_minutes, half_length_minutes, stage) "
+            "VALUES ('', ?, ?, 'scheduled', 0, 0, 0, ?, ?, ?)",
+            (winners[i], winners[i + 1], duration, half_length, next_stage),
+        )
+
+    # Bonus: generating the final from 2 semis also sets up the 3rd-place playoff.
+    if next_stage == "final" and len(losers) == 2:
+        db.execute(
+            "INSERT INTO matches "
+            "(group_name, team_a, team_b, status, half, score_a, score_b, "
+            " duration_minutes, half_length_minutes, stage) "
+            "VALUES ('', ?, ?, 'scheduled', 0, 0, 0, ?, ?, 'third_place')",
+            (losers[0], losers[1], duration, half_length),
+        )
+
+    db.commit()
+    return redirect(url_for("admin_knockouts"))
 
 
 # ---------------------------------------------------------------------------
@@ -302,6 +584,12 @@ def live_match(match_id):
     if match is None:
         return "Match not found", 404
     return render_template("live.html", match_id=match_id)
+
+
+@app.route("/standings")
+def standings_dashboard():
+    """Public dashboard: group tables + knockout bracket, no admin controls."""
+    return render_template("standings.html")
 
 
 # ---------------------------------------------------------------------------
@@ -325,53 +613,49 @@ def api_matches():
 
 @app.route("/api/standings/<group_name>")
 def api_standings(group_name):
+    return jsonify({"group": group_name, "standings": compute_standings(group_name)})
+
+
+@app.route("/api/tournament")
+def api_tournament():
     """
-    Very simple 3-1-0 standings table computed from full-time matches
-    in a given group. Good enough for round-robin group stages.
+    Full tournament state in one call — groups, standings, and the knockout
+    bracket. This is what a dashboard (or an LLM answering 'who's through to
+    the semis') should fetch.
     """
     db = get_db()
-    matches = db.execute(
-        "SELECT * FROM matches WHERE group_name=? AND status='full_time'",
-        (group_name,),
+    config = get_config()
+
+    groups = sorted({
+        r["group_name"] for r in
+        db.execute("SELECT DISTINCT group_name FROM matches WHERE stage='group' AND group_name != ''")
+    })
+    standings = {g: compute_standings(g) for g in groups}
+
+    knockout_matches = db.execute(
+        "SELECT * FROM matches WHERE stage != 'group' ORDER BY id ASC"
     ).fetchall()
+    stages_present = [s for s in STAGE_ORDER if s != "group"
+                       and any(m["stage"] == s for m in knockout_matches)]
+    bracket = [
+        {
+            "stage": s,
+            "label": STAGE_LABELS[s],
+            "matches": [match_to_dict(m["id"]) for m in knockout_matches if m["stage"] == s],
+        }
+        for s in stages_present
+    ]
 
-    table = {}
-
-    def team_row(name):
-        return table.setdefault(name, {
-            "team": name, "played": 0, "won": 0, "drawn": 0, "lost": 0,
-            "gf": 0, "ga": 0, "points": 0,
-        })
-
-    for m in matches:
-        a, b = team_row(m["team_a"]), team_row(m["team_b"])
-        a["played"] += 1
-        b["played"] += 1
-        a["gf"] += m["score_a"]
-        a["ga"] += m["score_b"]
-        b["gf"] += m["score_b"]
-        b["ga"] += m["score_a"]
-
-        if m["score_a"] > m["score_b"]:
-            a["won"] += 1
-            a["points"] += 3
-            b["lost"] += 1
-        elif m["score_a"] < m["score_b"]:
-            b["won"] += 1
-            b["points"] += 3
-            a["lost"] += 1
-        else:
-            a["drawn"] += 1
-            b["drawn"] += 1
-            a["points"] += 1
-            b["points"] += 1
-
-    standings = sorted(
-        table.values(),
-        key=lambda r: (r["points"], r["gf"] - r["ga"], r["gf"]),
-        reverse=True,
-    )
-    return jsonify({"group": group_name, "standings": standings})
+    return jsonify({
+        "tournament_name": config["tournament_name"],
+        "format": config["format"],
+        "total_teams": config["total_teams"],
+        "total_groups": config["total_groups"],
+        "qualifiers_per_group": config["qualifiers_per_group"],
+        "groups": groups,
+        "standings": standings,
+        "bracket": bracket,
+    })
 
 
 if __name__ == "__main__":
