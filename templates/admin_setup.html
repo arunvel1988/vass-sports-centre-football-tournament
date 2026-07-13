@@ -1,0 +1,50 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tournament Setup</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#0b1220; color:#eee; margin:0; padding:20px; max-width:480px; }
+    h1 { font-size:1.3rem; }
+    a { color:#7fd1ff; }
+    form { background:#141d33; padding:16px; border-radius:10px; margin-top:16px; }
+    label { display:block; margin:14px 0 6px; color:#9aa4c0; font-size:0.9rem; }
+    input, select { display:block; width:100%; box-sizing:border-box; padding:10px; border-radius:6px; border:none; font-size:1rem; }
+    button { margin-top:20px; padding:12px 20px; border-radius:8px; border:none; background:#2e7dff; color:white; font-size:1rem; width:100%; }
+    .hint { color:#9aa4c0; font-size:0.85rem; margin-top:4px; }
+    .radio-group label { display:flex; align-items:center; gap:8px; font-size:1rem; color:#eee; margin:8px 0; }
+    .radio-group input { width:auto; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Home</a></p>
+  <h1>⚙️ Tournament Setup</h1>
+
+  <form method="post" action="/admin/setup">
+    <label>Tournament name</label>
+    <input name="tournament_name" value="{{ config['tournament_name'] }}">
+
+    <label>Format</label>
+    <div class="radio-group">
+      <label><input type="radio" name="format" value="league" {% if config['format']=='league' %}checked{% endif %}> League only (table, no knockout)</label>
+      <label><input type="radio" name="format" value="knockout" {% if config['format']=='knockout' %}checked{% endif %}> Knockout only (straight bracket, no groups)</label>
+      <label><input type="radio" name="format" value="group_knockout" {% if config['format']=='group_knockout' or not config['format'] %}checked{% endif %}> Groups + Knockout (table, then bracket)</label>
+    </div>
+
+    <label>Total teams (optional, informational)</label>
+    <input name="total_teams" type="number" value="{{ config['total_teams'] or '' }}">
+
+    <label>Total groups (optional, informational)</label>
+    <input name="total_groups" type="number" value="{{ config['total_groups'] or '' }}">
+
+    <label>Qualifiers per group (used when generating the knockout stage)</label>
+    <input name="qualifiers_per_group" type="number" value="{{ config['qualifiers_per_group'] or 2 }}">
+    <div class="hint">e.g. 4 groups × top 2 = 8 teams → quarter-finals. 2 groups × top 2 = 4 teams → semi-finals.</div>
+
+    <button type="submit">Save</button>
+  </form>
+
+  <p style="margin-top:20px;"><a href="/admin">🎛 Go to matches</a> · <a href="/admin/knockouts">🏆 Go to knockouts</a></p>
+</body>
+</html>
