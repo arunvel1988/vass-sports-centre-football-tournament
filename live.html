@@ -1,0 +1,45 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VSFC — Live</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#0b1220; color:#eee; text-align:center; padding:40px 16px; }
+    .score { font-size:3rem; font-weight:700; margin:10px 0; }
+    .status { color:#9aa4c0; margin-bottom:30px; }
+    .events { text-align:left; max-width:400px; margin:0 auto; }
+    .events div { padding:6px 0; border-bottom:1px solid #202844; }
+  </style>
+</head>
+<body>
+  <div class="status" id="status">Loading…</div>
+  <div class="score" id="score">– : –</div>
+  <div class="events" id="events"></div>
+
+  <script>
+    const matchId = {{ match_id }};
+
+    async function refresh() {
+      const res = await fetch(`/api/matches/${matchId}`);
+      const data = await res.json();
+      document.getElementById('score').textContent =
+        `${data.team_a} ${data.score_a} : ${data.score_b} ${data.team_b}`;
+      document.getElementById('status').textContent =
+        `${data.status.replace('_',' ').toUpperCase()}`;
+
+      const events = document.getElementById('events');
+      events.innerHTML = '';
+      data.events.slice().reverse().forEach(e => {
+        const icon = {goal:'⚽', yellow:'🟨', red:'🟥'}[e.type] || 'ℹ️';
+        const div = document.createElement('div');
+        div.textContent = `${icon} ${e.type}${e.team ? ' — ' + e.team : ''}`;
+        events.appendChild(div);
+      });
+    }
+
+    refresh();
+    setInterval(refresh, 4000); // poll every 4s — good enough for live football
+  </script>
+</body>
+</html>
