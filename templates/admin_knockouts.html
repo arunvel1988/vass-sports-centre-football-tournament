@@ -1,0 +1,142 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Knockout Stage — Admin</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#0b1220; color:#eee; margin:0; padding:20px; max-width:640px; }
+    h1 { font-size:1.3rem; }
+    h2 { font-size:1.05rem; color:#9aa4c0; margin:26px 0 10px; }
+    a { color:#7fd1ff; }
+    table { width:100%; border-collapse: collapse; background:#141d33; border-radius:10px; overflow:hidden; margin-bottom:12px;}
+    th, td { padding:8px 10px; text-align:left; font-size:0.9rem; }
+    th { color:#9aa4c0; font-weight:600; border-bottom:1px solid #202844; }
+    tr:nth-child(even) { background:#0f1729; }
+    .card { background:#141d33; padding:14px 16px; border-radius:10px; margin-bottom:14px; }
+    form.inline { display:flex; gap:10px; flex-wrap:wrap; align-items:end; }
+    label { display:block; color:#9aa4c0; font-size:0.85rem; margin-bottom:4px; }
+    input, select { padding:8px; border-radius:6px; border:none; }
+    button { padding:10px 16px; border-radius:8px; border:none; background:#2e7dff; color:white; font-weight:600; cursor:pointer; }
+    button:disabled { background:#3a3f5c; cursor:not-allowed; }
+    .checkboxes { display:flex; gap:12px; flex-wrap:wrap; }
+    .checkboxes label { display:flex; align-items:center; gap:6px; color:#eee; }
+    .checkboxes input { width:auto; }
+    .match-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #202844; align-items:center; }
+    .match-row:last-child { border-bottom:none; }
+    .winner { color:#4ade80; font-weight:600; }
+    .pending { color:#f59e0b; }
+    .set-winner-btn { background:#3a3f5c; padding:4px 8px; font-size:0.8rem; border-radius:6px; }
+  </style>
+</head>
+<body>
+  <p><a href="/">← Home</a> · <a href="/admin/setup">⚙️ Setup</a> · <a href="/admin">🎛 Matches</a></p>
+  <h1>🏆 Knockout Stage</h1>
+  <p style="color:#9aa4c0;">Format: {{ config['format'] }} · Qualifiers per group: {{ config['qualifiers_per_group'] }}</p>
+
+  {% if groups %}
+    <h2>Group standings</h2>
+    {% for g in groups %}
+      <div class="card">
+        <strong>Group {{ g }}</strong>
+        <table>
+          <tr><th>#</th><th>Team</th><th>P</th><th>W</th><th>D</th><th>L</th><th>GF</th><th>GA</th><th>Pts</th></tr>
+          {% for row in standings_by_group[g] %}
+            <tr {% if loop.index <= config['qualifiers_per_group'] %}style="color:#4ade80;"{% endif %}>
+              <td>{{ loop.index }}</td><td>{{ row.team }}</td><td>{{ row.played }}</td>
+              <td>{{ row.won }}</td><td>{{ row.drawn }}</td><td>{{ row.lost }}</td>
+              <td>{{ row.gf }}</td><td>{{ row.ga }}</td><td><strong>{{ row.points }}</strong></td>
+            </tr>
+          {% endfor %}
+        </table>
+      </div>
+    {% endfor %}
+
+    <div class="card">
+      <h2 style="margin-top:0;">Generate knockout stage from standings</h2>
+      <form class="inline" method="post" action="/admin/knockouts/generate-from-groups">
+        <div>
+          <label>Groups to include</label>
+          <div class="checkboxes">
+            {% for g in groups %}
+              <label><input type="checkbox" name="groups" value="{{ g }}" checked> {{ g }}</label>
+            {% endfor %}
+          </div>
+        </div>
+        <div>
+          <label>Qualifiers / group</label>
+          <input type="number" name="qualifiers_per_group" value="{{ config['qualifiers_per_group'] }}" style="width:70px;">
+        </div>
+        <div>
+          <label>Match length (min)</label>
+          <input type="number" name="duration_minutes" value="90" style="width:80px;">
+        </div>
+        <button type="submit">Generate bracket</button>
+      </form>
+      <p style="color:#9aa4c0; font-size:0.85rem; margin-bottom:0;">
+        Needs a power-of-two number of qualifying teams total (2, 4, 8, or 16).
+      </p>
+    </div>
+  {% else %}
+    <p style="color:#9aa4c0;">No group-stage matches yet. If you're running a pure knockout,
+      skip straight to creating matches in <a href="/admin">Matches</a> and set their
+      "stage" directly to Quarter-Final / Semi-Final / Final.</p>
+  {% endif %}
+
+  <h2>Bracket</h2>
+  {% for r in rounds %}
+    <div class="card">
+      <strong>{{ r.label }}</strong>
+      {% for m in r.matches %}
+        <div class="match-row">
+          <span>
+            {{ m['team_a'] }} {{ m['score_a'] }} - {{ m['score_b'] }} {{ m['team_b'] }}
+            <span style="color:#9aa4c0;">({{ m['status'] }})</span>
+          </span>
+          {% if m['status'] == 'full_time' %}
+            {% if m['winner_team'] %}
+              <span class="winner">✅ {{ m['winner_team'] }}</span>
+            {% else %}
+              <span class="pending">
+                Draw — pick winner:
+                <button class="set-winner-btn" onclick="setWinner({{ m['id'] }}, {{ m['team_a']|tojson }})">{{ m['team_a'] }}</button>
+                <button class="set-winner-btn" onclick="setWinner({{ m['id'] }}, {{ m['team_b']|tojson }})">{{ m['team_b'] }}</button>
+              </span>
+            {% endif %}
+          {% else %}
+            <a href="/admin/{{ m['id'] }}">🎛 open</a>
+          {% endif %}
+        </div>
+      {% endfor %}
+
+      {% if r.all_resolved and r.stage != 'final' and r.stage != 'third_place' %}
+        <form class="inline" method="post" action="/admin/knockouts/generate-next" style="margin-top:12px;">
+          <input type="hidden" name="stage" value="{{ r.stage }}">
+          <div>
+            <label>Match length (min)</label>
+            <input type="number" name="duration_minutes" value="90" style="width:80px;">
+          </div>
+          <button type="submit">Generate next round ▶</button>
+        </form>
+      {% elif not r.all_complete %}
+        <p style="color:#9aa4c0; font-size:0.85rem; margin-bottom:0;">Waiting for all matches to finish.</p>
+      {% elif not r.all_resolved %}
+        <p style="color:#f59e0b; font-size:0.85rem; margin-bottom:0;">Some matches are drawn — pick winners above before advancing.</p>
+      {% endif %}
+    </div>
+  {% else %}
+    <p style="color:#9aa4c0;">No knockout matches yet.</p>
+  {% endfor %}
+
+  <script>
+    async function setWinner(matchId, team) {
+      await fetch(`/admin/${matchId}/set-winner`, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({team})
+      });
+      location.reload();
+    }
+  </script>
+</body>
+</html>
