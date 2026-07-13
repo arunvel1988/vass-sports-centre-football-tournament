@@ -9,7 +9,18 @@ CREATE TABLE matches (
     status TEXT NOT NULL DEFAULT 'scheduled',  -- scheduled/live/half_time/full_time
     half INTEGER NOT NULL DEFAULT 0,
     score_a INTEGER NOT NULL DEFAULT 0,
-    score_b INTEGER NOT NULL DEFAULT 0
+    score_b INTEGER NOT NULL DEFAULT 0,
+
+    duration_minutes INTEGER NOT NULL DEFAULT 90,     -- full match length (e.g. 90 or 16)
+    half_length_minutes INTEGER NOT NULL DEFAULT 45,  -- length of ONE half (duration/2)
+
+    kickoff_time TEXT,             -- when 1st half started (UTC iso)
+    second_half_start_time TEXT,   -- when 2nd half started (UTC iso)
+
+    half_time_score_a INTEGER,     -- score locked in at half-time whistle
+    half_time_score_b INTEGER,
+    full_time_score_a INTEGER,     -- score locked in at full-time whistle
+    full_time_score_b INTEGER
 );
 
 CREATE TABLE events (
