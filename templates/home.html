@@ -1,0 +1,59 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VSFC — Home</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background:#0b1220; color:#eee; margin:0; padding:20px; }
+    h1 { font-size:1.4rem; margin-bottom:4px; }
+    h2 { font-size:1.05rem; color:#9aa4c0; margin:26px 0 10px; }
+    a { color:#7fd1ff; text-decoration:none; }
+    .card {
+      display:block; background:#141d33; border-radius:10px; padding:14px 18px;
+      margin-bottom:10px;
+    }
+    .card .title { color:#eee; font-weight:600; }
+    .card .sub { color:#9aa4c0; font-size:0.9rem; margin-top:4px; }
+    .links { margin-top:8px; display:flex; gap:14px; flex-wrap:wrap; }
+    .links a { font-size:0.9rem; background:#1c2745; padding:5px 10px; border-radius:6px; }
+    .top-links { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:20px; }
+    .top-links a { background:#2e7dff; color:white; padding:10px 16px; border-radius:8px; font-weight:600; }
+    .empty { color:#9aa4c0; }
+    code { background:#1c2745; padding:2px 6px; border-radius:4px; }
+  </style>
+</head>
+<body>
+  <h1>⚽ VSFC — Vass Sports Centre Football Tournament</h1>
+  <p class="empty">Live match tracking hub</p>
+
+  <div class="top-links">
+    <a href="/admin">➕ Volunteer admin (create / update matches)</a>
+    <a href="/api/matches">📄 All matches (JSON)</a>
+  </div>
+
+  <h2>Matches</h2>
+  {% for m in matches %}
+    <div class="card">
+      <div class="title">{{ m['team_a'] }} vs {{ m['team_b'] }} — {{ m['score_a'] }} : {{ m['score_b'] }}</div>
+      <div class="sub">Group {{ m['group_name'] }} · {{ m['status'] }}</div>
+      <div class="links">
+        <a href="/live/{{ m['id'] }}">📺 Live scoreboard</a>
+        <a href="/admin/{{ m['id'] }}">🎛 Volunteer panel</a>
+        <a href="/api/matches/{{ m['id'] }}">🔧 JSON</a>
+      </div>
+    </div>
+  {% else %}
+    <p class="empty">No matches yet. Go to <a href="/admin">/admin</a> to create the first one.</p>
+  {% endfor %}
+
+  {% if groups %}
+    <h2>Group standings</h2>
+    <div class="links">
+      {% for g in groups %}
+        <a href="/api/standings/{{ g }}">Group {{ g }} table (JSON)</a>
+      {% endfor %}
+    </div>
+  {% endif %}
+</body>
+</html>
