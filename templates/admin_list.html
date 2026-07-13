@@ -21,7 +21,7 @@
   {% for m in matches %}
     <a class="match" href="/admin/{{ m['id'] }}">
       {{ m['team_a'] }} vs {{ m['team_b'] }}
-      <br><small>Group {{ m['group_name'] }} · {{ m['status'] }} · {{ m['score_a'] }}-{{ m['score_b'] }}</small>
+      <br><small>Group {{ m['group_name'] }} · {{ m['duration_minutes'] }}-min match ({{ m['half_length_minutes'] }}-min halves) · {{ m['status'] }} · {{ m['score_a'] }}-{{ m['score_b'] }}</small>
     </a>
   {% else %}
     <p>No matches yet — create one below.</p>
@@ -34,6 +34,13 @@
     <input name="team_a" placeholder="Argentina" required>
     <label>Team B</label>
     <input name="team_b" placeholder="Brazil" required>
+
+    <label>Match length (minutes) — e.g. 90 for full, 16 for short tournament games</label>
+    <input name="duration_minutes" type="number" value="90" required>
+
+    <label>Half length (minutes) — leave as-is to auto-split the match length in two</label>
+    <input name="half_length_minutes" type="number" placeholder="auto (half of match length)">
+
     <button type="submit">Create match</button>
   </form>
 </body>
