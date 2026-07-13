@@ -1,9 +1,10 @@
 DROP TABLE IF EXISTS events;
 DROP TABLE IF EXISTS matches;
+DROP TABLE IF EXISTS tournament_config;
 
 CREATE TABLE matches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    group_name TEXT NOT NULL,
+    group_name TEXT NOT NULL DEFAULT '',   -- '' for knockout-only matches with no group
     team_a TEXT NOT NULL,
     team_b TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'scheduled',  -- scheduled/live/half_time/full_time
@@ -20,7 +21,11 @@ CREATE TABLE matches (
     half_time_score_a INTEGER,     -- score locked in at half-time whistle
     half_time_score_b INTEGER,
     full_time_score_a INTEGER,     -- score locked in at full-time whistle
-    full_time_score_b INTEGER
+    full_time_score_b INTEGER,
+
+    -- 'group' / 'round_of_16' / 'quarterfinal' / 'semifinal' / 'third_place' / 'final'
+    stage TEXT NOT NULL DEFAULT 'group',
+    winner_team TEXT               -- set automatically, or manually for penalty-shootout draws
 );
 
 CREATE TABLE events (
@@ -31,4 +36,14 @@ CREATE TABLE events (
     player TEXT,
     minute INTEGER,
     timestamp TEXT NOT NULL
+);
+
+-- One row (id=1). Not enforced strictly, just a settings singleton.
+CREATE TABLE tournament_config (
+    id INTEGER PRIMARY KEY CHECK (id = 1),
+    tournament_name TEXT NOT NULL DEFAULT 'VSFC Tournament',
+    format TEXT NOT NULL DEFAULT 'group_knockout',  -- league / knockout / group_knockout
+    total_teams INTEGER,
+    total_groups INTEGER,
+    qualifiers_per_group INTEGER DEFAULT 2
 );
