@@ -11,25 +11,39 @@
     .match { display:block; background:#141d33; border-radius:10px; padding:14px 18px; margin-bottom:10px; text-decoration:none; color:#eee; }
     .match small { color:#9aa4c0; }
     form { margin-top:24px; background:#141d33; padding:16px; border-radius:10px; }
-    input { display:block; width:100%; box-sizing:border-box; margin:6px 0 14px; padding:10px; border-radius:6px; border:none; }
+    input, select { display:block; width:100%; box-sizing:border-box; margin:6px 0 14px; padding:10px; border-radius:6px; border:none; }
     button { padding:12px 20px; border-radius:8px; border:none; background:#2e7dff; color:white; font-size:1rem; }
   </style>
 </head>
 <body>
+  <p><a href="/">← Home</a> · <a href="/admin/setup">⚙️ Setup</a> · <a href="/admin/knockouts">🏆 Knockouts</a></p>
   <h1>⚽ VSFC — Matches</h1>
 
   {% for m in matches %}
     <a class="match" href="/admin/{{ m['id'] }}">
       {{ m['team_a'] }} vs {{ m['team_b'] }}
-      <br><small>Group {{ m['group_name'] }} · {{ m['duration_minutes'] }}-min match ({{ m['half_length_minutes'] }}-min halves) · {{ m['status'] }} · {{ m['score_a'] }}-{{ m['score_b'] }}</small>
+      <br><small>
+        {% if m['stage'] == 'group' %}Group {{ m['group_name'] }}{% else %}{{ m['stage']|replace('_',' ')|title }}{% endif %}
+        · {{ m['duration_minutes'] }}-min match ({{ m['half_length_minutes'] }}-min halves) · {{ m['status'] }} · {{ m['score_a'] }}-{{ m['score_b'] }}
+      </small>
     </a>
   {% else %}
     <p>No matches yet — create one below.</p>
   {% endfor %}
 
   <form method="post" action="/admin/new">
-    <label>Group</label>
-    <input name="group_name" placeholder="A" required>
+    <label>Stage</label>
+    <select name="stage">
+      <option value="group">Group Stage</option>
+      <option value="round_of_16">Round of 16</option>
+      <option value="quarterfinal">Quarter-Final</option>
+      <option value="semifinal">Semi-Final</option>
+      <option value="third_place">3rd Place Play-off</option>
+      <option value="final">Final</option>
+    </select>
+
+    <label>Group (only needed for Group Stage matches)</label>
+    <input name="group_name" placeholder="A">
     <label>Team A</label>
     <input name="team_a" placeholder="Argentina" required>
     <label>Team B</label>
