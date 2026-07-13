@@ -67,6 +67,33 @@ def get_match_or_404(match_id):
     return match
 
 
+def compute_current_minute(match):
+    """
+    Works out 'what minute is it' from kickoff timestamps, so the volunteer
+    doesn't have to do mental math — but they can still override it manually
+    per event (stoppage time, etc).
+    """
+    now = datetime.utcnow()
+
+    if match["status"] == "live" and match["half"] == 1 and match["kickoff_time"]:
+        kickoff = datetime.fromisoformat(match["kickoff_time"])
+        elapsed = (now - kickoff).total_seconds() / 60
+        return min(int(elapsed) + 1, match["half_length_minutes"])
+
+    if match["status"] == "live" and match["half"] == 2 and match["second_half_start_time"]:
+        start = datetime.fromisoformat(match["second_half_start_time"])
+        elapsed = (now - start).total_seconds() / 60
+        return min(match["half_length_minutes"] + int(elapsed) + 1, match["duration_minutes"])
+
+    if match["status"] == "half_time":
+        return match["half_length_minutes"]
+
+    if match["status"] == "full_time":
+        return match["duration_minutes"]
+
+    return 0
+
+
 def recompute_score(match_id):
     """Score is derived from goal events, so it can never drift."""
     db = get_db()
@@ -108,6 +135,17 @@ def match_to_dict(match_id):
         "score_b": match["score_b"],
         "status": match["status"],          # scheduled / live / half_time / full_time
         "half": match["half"],
+        "duration_minutes": match["duration_minutes"],
+        "half_length_minutes": match["half_length_minutes"],
+        "current_minute": compute_current_minute(match),
+        "half_time_score": (
+            f'{match["half_time_score_a"]}-{match["half_time_score_b"]}'
+            if match["half_time_score_a"] is not None else None
+        ),
+        "full_time_score": (
+            f'{match["full_time_score_a"]}-{match["full_time_score_b"]}'
+            if match["full_time_score_a"] is not None else None
+        ),
         "scorers": [
             {"team": e["team"], "player": e["player"], "minute": e["minute"]}
             for e in events if e["type"] == "goal"
@@ -156,10 +194,17 @@ def admin_list():
 @app.route("/admin/new", methods=["POST"])
 def admin_new_match():
     db = get_db()
+    duration = int(request.form.get("duration_minutes") or 90)
+    # half length defaults to exactly half the duration (16 -> 8, 90 -> 45)
+    half_length = int(request.form.get("half_length_minutes") or (duration // 2))
+
     db.execute(
-        "INSERT INTO matches (group_name, team_a, team_b, status, half, score_a, score_b) "
-        "VALUES (?, ?, ?, 'scheduled', 0, 0, 0)",
-        (request.form["group_name"], request.form["team_a"], request.form["team_b"]),
+        "INSERT INTO matches "
+        "(group_name, team_a, team_b, status, half, score_a, score_b, "
+        " duration_minutes, half_length_minutes) "
+        "VALUES (?, ?, ?, 'scheduled', 0, 0, 0, ?, ?)",
+        (request.form["group_name"], request.form["team_a"], request.form["team_b"],
+         duration, half_length),
     )
     db.commit()
     return redirect(url_for("admin_list"))
@@ -190,33 +235,55 @@ def admin_add_event(match_id):
     ev_type = data.get("type")
     team = data.get("team", "")
     player = data.get("player", "")
-    minute = data.get("minute")
+    minute = data.get("minute")  # volunteer can type an exact minute; else we compute it
 
     db = get_db()
+    now_iso = datetime.utcnow().isoformat()
+
+    # First-ever action on the match (usually kickoff) starts the clock.
+    if match["status"] == "scheduled":
+        db.execute(
+            "UPDATE matches SET status='live', half=1, kickoff_time=? WHERE id=?",
+            (now_iso, match_id),
+        )
+        db.commit()
+        match = get_match_or_404(match_id)  # refresh for minute calc below
 
     if ev_type in ("goal", "yellow", "red"):
+        if minute in (None, ""):
+            minute = compute_current_minute(match)
         db.execute(
             "INSERT INTO events (match_id, type, team, player, minute, timestamp) "
             "VALUES (?, ?, ?, ?, ?, ?)",
-            (match_id, ev_type, team, player, minute, datetime.utcnow().isoformat()),
+            (match_id, ev_type, team, player, minute, now_iso),
         )
         db.commit()
         if ev_type == "goal":
             recompute_score(match_id)
-        if match["status"] == "scheduled":
-            db.execute("UPDATE matches SET status='live' WHERE id=?", (match_id,))
-            db.commit()
 
     elif ev_type == "half_time":
-        db.execute("UPDATE matches SET status='half_time', half=1 WHERE id=?", (match_id,))
+        # Lock in the score at the half-time whistle, separate from live score.
+        db.execute(
+            "UPDATE matches SET status='half_time', half=1, "
+            "half_time_score_a=score_a, half_time_score_b=score_b WHERE id=?",
+            (match_id,),
+        )
         db.commit()
 
     elif ev_type == "second_half":
-        db.execute("UPDATE matches SET status='live', half=2 WHERE id=?", (match_id,))
+        db.execute(
+            "UPDATE matches SET status='live', half=2, second_half_start_time=? WHERE id=?",
+            (now_iso, match_id),
+        )
         db.commit()
 
     elif ev_type == "full_time":
-        db.execute("UPDATE matches SET status='full_time' WHERE id=?", (match_id,))
+        # Lock in the final score at the full-time whistle.
+        db.execute(
+            "UPDATE matches SET status='full_time', "
+            "full_time_score_a=score_a, full_time_score_b=score_b WHERE id=?",
+            (match_id,),
+        )
         db.commit()
 
     else:
