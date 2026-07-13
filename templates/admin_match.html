@@ -31,6 +31,15 @@
 
   <div class="status" id="status">Loading…</div>
   <div class="score" id="score">– : –</div>
+  <div class="half-scores" id="halfScores" style="text-align:center;color:#9aa4c0;margin-bottom:14px;"></div>
+
+  <div style="text-align:center; margin-bottom:16px;">
+    <label style="display:block; margin-bottom:6px; color:#9aa4c0;">
+      Minute (auto-filled from kickoff — edit if wrong, e.g. stoppage time)
+    </label>
+    <input id="minuteInput" type="number" min="0"
+      style="font-size:1.4rem; text-align:center; width:100px; padding:8px; border-radius:8px; border:none;">
+  </div>
 
   <div class="grid">
     <button class="big goal-a" onclick="sendEvent('goal', teamA)">⚽ {{ match['team_a'] }} Goal</button>
@@ -54,30 +63,52 @@
     const teamA = {{ match['team_a']|tojson }};
     const teamB = {{ match['team_b']|tojson }};
 
+    let userEditedMinute = false;
+    const minuteInput = document.getElementById('minuteInput');
+    minuteInput.addEventListener('input', () => { userEditedMinute = true; });
+
     function render(data) {
       document.getElementById('score').textContent =
         `${data.team_a} ${data.score_a} : ${data.score_b} ${data.team_b}`;
       document.getElementById('status').textContent =
-        `${data.status.toUpperCase()} ${data.half ? '· Half ' + data.half : ''}`;
+        `${data.status.toUpperCase()} ${data.half ? '· Half ' + data.half : ''} `
+        + `· ${data.current_minute}' / ${data.duration_minutes}'`;
+
+      const halfScores = document.getElementById('halfScores');
+      let parts = [];
+      if (data.half_time_score) parts.push(`HT: ${data.half_time_score}`);
+      if (data.full_time_score) parts.push(`FT: ${data.full_time_score}`);
+      halfScores.textContent = parts.join(' · ');
+
+      // Keep the minute field in sync with the match clock, unless the
+      // volunteer is mid-edit (e.g. correcting for stoppage time).
+      if (!userEditedMinute) {
+        minuteInput.value = data.current_minute;
+      }
 
       const log = document.getElementById('log');
       log.innerHTML = '';
       data.events.slice().reverse().forEach(e => {
         const div = document.createElement('div');
         const icon = {goal:'⚽', yellow:'🟨', red:'🟥'}[e.type] || 'ℹ️';
-        div.textContent = `${icon} ${e.type} ${e.team ? '— ' + e.team : ''}`;
+        div.textContent = `${icon} ${e.minute}' ${e.type} ${e.team ? '— ' + e.team : ''}`;
         log.appendChild(div);
       });
     }
 
     async function sendEvent(type, team) {
       // 1-2 second interaction: tap, optional confirm skipped for speed.
+      const body = {type, team};
+      if (['goal', 'yellow', 'red'].includes(type)) {
+        body.minute = parseInt(minuteInput.value, 10) || 0;
+      }
       const res = await fetch(`/admin/${matchId}/event`, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({type, team})
+        body: JSON.stringify(body)
       });
       const data = await res.json();
+      userEditedMinute = false; // next event goes back to auto-fill
       render(data);
       if (navigator.vibrate) navigator.vibrate(30);
     }
@@ -87,6 +118,7 @@
       render(await res.json());
     }
     refresh();
+    setInterval(refresh, 15000); // keep the clock/minute ticking forward
   </script>
 </body>
 </html>
