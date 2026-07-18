@@ -1,3 +1,4 @@
+{% set tournament = tournament|default({}) %}
 <!doctype html>
 <html lang="en">
 <head>
@@ -228,7 +229,6 @@
   </style>
 </head>
 <body>
-  {% set tournament = tournament|default({}) %}
   <header>
     <div class="eyebrow"><span class="dot"></span> Live match tracking</div>
     <h1>{{ tournament.icon | default('🏆') }} {{ tournament.name | default('Tournament Live') }}</h1>
